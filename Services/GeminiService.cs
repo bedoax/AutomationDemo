@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace AutomationDemo.Services
 {
     /// <summary>
-    /// خدمة التلخيص باستخدام Gemini API مع fallback تلقائي لـ 3 موديلات
+    /// خدمة التلخيص باستخدام Gemini API مع fallback تلقائي لـ 5 موديلات
     /// </summary>
     public class GeminiService : IGeminiService
     {
