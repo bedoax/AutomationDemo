@@ -110,8 +110,8 @@ All without any manual interaction.
 
 ### Step 1 — Clone the repository
 ```bash
-git clone https://github.com/bedoax/WebScrapSummeryWhatsAppWeb.git
-cd WebScrapSummeryWhatsAppWeb
+git clone https://github.com/bedoax/AutomationDemo.git
+cd AutomationDemo
 ```
 
 ### Step 2 — Restore NuGet packages
