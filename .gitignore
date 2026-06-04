@@ -1,0 +1,14 @@
+# Build output
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.http
+
+# WhatsApp session data
+WhatsAppUserData/
+
+# Secrets - never push to GitHub
+appsettings.Development.json
