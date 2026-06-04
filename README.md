@@ -13,6 +13,7 @@
 - [Installation & Setup](#-installation--setup)
 - [Configuration Reference](#-configuration-reference)
 - [Project Structure](#-project-structure)
+- [Architecture](#-architecture)
 - [Key Methods](#-key-methods)
 - [Important Notes](#-important-notes--limitations)
 - [Troubleshooting](#-troubleshooting)
@@ -25,7 +26,7 @@
 
 1. ⏰ Wakes up every day at a **scheduled time**
 2. 🌐 Opens **WhatsApp Web** automatically using Microsoft Edge
-3. 📥 **Scrapes** all messages from a source community sub-group
+3. 📥 **Scrapes** messages from a source community sub-group based on a configurable number of days
 4. 🧠 Sends them to **Google Gemini AI** for intelligent Arabic summarization
 5. 📤 Posts the formatted summary into a **target sub-group**
 
@@ -42,61 +43,65 @@ All without any manual interaction.
 🌐 Launch Edge + Load WhatsApp Web
         │
         ▼
-📥 Navigate to Source Group → Scrape Messages
+📥 Navigate to Source Group → Scroll up → Scrape Messages
         │
         ▼
-🧠 Send to Gemini API → Get Arabic Summary
+🔍 Filter & validate messages (date, media, text)
+        │
+        ▼
+🧠 Send to Gemini API (with multi-model fallback) → Get Arabic Summary
         │
         ▼
 📤 Navigate to Target Group → Paste & Send Summary
         │
         ▼
-🔒 Close Browser → Wait for next day
+🔒 Dispose Browser → Wait for next day
 ```
 
 | Step | What happens |
 |------|-------------|
 | 1 — Wait for schedule | Calculates next run time from `appsettings.json` and sleeps until then |
-| 2 — Launch Edge | PuppeteerSharp launches Microsoft Edge using the saved WhatsApp session |
-| 3 — Load WhatsApp Web | Navigates to `web.whatsapp.com`, waits for full initialization |
-| 4 — Scrape source group | Searches for the source sub-group, scrolls up 5× to load older messages, extracts all messages via JavaScript |
-| 5 — Call Gemini AI | Sends messages to Gemini API with a structured Arabic prompt |
-| 6 — Format summary | Wraps AI response in a branded header with message count and timestamp |
-| 7 — Send to target group | Navigates to target sub-group and pastes summary using a Clipboard event |
-| 8 — Close browser | Closes Edge cleanly and waits for the next scheduled run |
+| 2 — Launch Edge | `WhatsAppClient` launches Microsoft Edge with a saved session to skip QR |
+| 3 — Load WhatsApp Web | Navigates to `web.whatsapp.com`, detects QR screen, waits for full load |
+| 4 — Scrape source group | Searches for the source sub-group, scrolls up dynamically until the date boundary, extracts messages via JavaScript |
+| 5 — Filter messages | Removes media, stickers, audio timestamps, and messages older than `DaysToScrape` |
+| 6 — Call Gemini AI | Sends filtered messages to Gemini API with a structured Arabic prompt — tries up to 5 models automatically |
+| 7 — Format summary | Wraps AI response in a header with message count and timestamp |
+| 8 — Send to target group | Navigates to target sub-group and pastes summary using a Clipboard event |
+| 9 — Dispose browser | Closes page and browser properly (`IAsyncDisposable`) and waits for next scheduled run |
 
 ---
 
 ## 🛠️ Prerequisites
 
 ### Operating System
-> ⚠️ **Windows 10 / 11 (64-bit) only** — Edge path is hardcoded to a Windows directory.
+> ⚠️ **Windows 10 / 11 (64-bit) only** — Edge path defaults to a Windows directory (configurable in `appsettings.json`).
 
 ### Runtime
 
 | Requirement | Details |
 |-------------|---------|
 | **.NET 8 SDK** | [Download here](https://dotnet.microsoft.com/download/dotnet/8.0) |
-| **Microsoft Edge** | Must be installed at `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe` |
+| **Microsoft Edge** | Must be installed at `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe` (or configure custom path) |
 | **WhatsApp Account** | A valid account that has scanned the QR code at least once |
 
 ### NuGet Packages
-> These are auto-restored by `dotnet restore` — no manual install needed.
+> Auto-restored by `dotnet restore` — no manual install needed.
 
 | Package | Purpose |
 |---------|---------|
 | `PuppeteerSharp` | Controls Microsoft Edge browser programmatically |
 | `Microsoft.Extensions.Hosting` | Provides `BackgroundService` base class and lifecycle |
+| `Microsoft.Extensions.Http` | Provides `IHttpClientFactory` for safe HTTP client management |
 | `Microsoft.Extensions.Configuration` | Reads settings from `appsettings.json` |
 | `Microsoft.Extensions.Logging` | Structured logging (Info / Warning / Error / Critical) |
-| `System.Text.Json` | Built-in .NET JSON serialization — no extra package needed |
-| `System.Net.Http` | Built-in .NET HTTP client — no extra package needed |
+| `System.Text.Json` | Built-in .NET JSON serialization |
 
 ### External APIs
 
 | API | Details |
 |-----|---------|
-| **Google Gemini AI** | Free tier available. Get your key from [Google AI Studio](https://aistudio.google.com/app/apikey) — Model: `gemini-3.5-flash` |
+| **Google Gemini AI** | Free tier available. Get your key from [Google AI Studio](https://aistudio.google.com/apikey). Key must start with `AIzaSy...` |
 | **WhatsApp Web** | No official API — the bot automates the browser UI directly via PuppeteerSharp |
 
 ---
@@ -105,8 +110,8 @@ All without any manual interaction.
 
 ### Step 1 — Clone the repository
 ```bash
-git clone https://github.com/bedoax/AutomationDemo.git
-cd AutomationDemo
+git clone https://github.com/bedoax/WebScrapSummeryWhatsAppWeb.git
+cd WebScrapSummeryWhatsAppWeb
 ```
 
 ### Step 2 — Restore NuGet packages
@@ -114,16 +119,19 @@ cd AutomationDemo
 dotnet restore
 ```
 
-### Step 3 — Configure `appsettings.json`
+### Step 3 — Create `appsettings.json`
+> ⚠️ This file is excluded from Git for security. Create it manually:
+
 ```json
 {
   "WhatsAppAutomation": {
     "CommunityName":  "YourCommunityName",
     "SourceSubGroup": "General",
     "TargetSubGroup": "Resources",
-    "GeminiApiKey":   "YOUR_GEMINI_API_KEY_HERE",
+    "GeminiApiKey":   "AIzaSy_YOUR_KEY_HERE",
     "RunHour":        "19",
-    "RunMinute":      "49"
+    "RunMinute":      "00",
+    "DaysToScrape":   "1"
   }
 }
 ```
@@ -147,54 +155,103 @@ The service logs the next scheduled run time and waits automatically.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `CommunityName` | `CognitionX` | Name of the WhatsApp community (for logging only) |
+| `CommunityName` | `CognitionX` | Name of the WhatsApp community |
 | `SourceSubGroup` | `General` | Exact name of the sub-group to scrape messages from |
 | `TargetSubGroup` | `Resources` | Exact name of the sub-group to post the summary into |
-| `GeminiApiKey` | *(required)* | Your Google Gemini API key — never commit this! |
+| `GeminiApiKey` | *(required)* | Your Google Gemini API key — must start with `AIzaSy` — never commit this! |
 | `RunHour` | `19` | Hour (24h format) at which the pipeline runs daily |
-| `RunMinute` | `49` | Minute at which the pipeline runs daily |
+| `RunMinute` | `00` | Minute at which the pipeline runs daily |
+| `DaysToScrape` | `1` | How many days back to scrape messages (1 = today only, 7 = last week) |
+| `EdgePath` | `C:\...\msedge.exe` | Optional: override the default Edge executable path |
 
 ---
 
 ## 📁 Project Structure
 
 ```
-AutomationDemo/
+WebScrapSummeryWhatsAppWeb/
+│
+├── Interfaces/
+│   ├── IWhatsAppClient.cs     ← Contract for all browser operations
+│   ├── IGeminiService.cs      ← Contract for AI summarization
+│   └── IMessageFilter.cs      ← Contract for text filtering
 │
 ├── Services/
-│   └── WhatsAppAutomationWorker.cs   ← Main automation pipeline
+│   ├── WhatsAppAutomationWorker.cs  ← Scheduler + pipeline coordinator only
+│   ├── WhatsAppClient.cs            ← All browser logic (navigate, scrape, send)
+│   └── GeminiService.cs             ← Gemini API calls with multi-model fallback
 │
-├── appsettings.json                  ← All runtime configuration
-├── Program.cs                        ← Host builder & service registration
+├── Filters/
+│   └── GeminiMessageFilter.cs  ← Trims text to 40,000 chars max
 │
-└── WhatsAppUserData/                 ← Auto-created: stores WhatsApp session
-    └── (browser session files)
+├── Program.cs                  ← DI registration for all services
+├── appsettings.example.json    ← Template — copy and fill in your values
+│
+└── WhatsAppUserData/           ← Auto-created: stores WhatsApp browser session
+    └── (browser session files — excluded from Git)
 ```
+
+---
+
+## 🏗️ Architecture
+
+The project follows **Separation of Concerns** with clearly defined interfaces:
+
+```
+WhatsAppAutomationWorker
+  │  (Scheduler + Pipeline coordinator)
+  │
+  ├── IWhatsAppClient  →  WhatsAppClient
+  │     ├── InitializeAsync()       — Launch Edge, load WhatsApp Web
+  │     ├── NavigateToChatAsync()   — Search and open a group (with retry)
+  │     ├── ScrapeMessagesAsync()   — Scroll + harvest messages by date
+  │     └── SendMessageAsync()      — Paste and send via Clipboard API
+  │
+  ├── IGeminiService   →  GeminiService
+  │     └── SummarizeAsync()        — Call Gemini with 5-model fallback chain
+  │
+  └── IMessageFilter   →  GeminiMessageFilter
+        └── Filter()                — Trim to last 40,000 characters
+```
+
+### Gemini Model Fallback Chain
+
+If a model is unavailable or rate-limited, the service automatically tries the next:
+
+| Priority | Model | Notes |
+|----------|-------|-------|
+| Primary | `gemini-3.5-flash` | Latest — requires billing |
+| Secondary | `gemini-3.1-flash-lite` | Fast & lightweight — requires billing |
+| Tertiary | `gemini-2.5-flash` | Stable — free tier available |
+| Quaternary | `gemini-2.5-flash-lite` | Lightest — free tier available |
+| Fallback | `gemini-2.0-flash` | Most widely available |
 
 ---
 
 ## 🔧 Key Methods
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `ExecuteAsync()` | `Task` | Main loop — schedules and runs the daily pipeline |
-| `LoadConfigurations()` | `void` | Reads `appsettings.json` and refreshes all settings each cycle |
-| `NavigateToChatAsync(name)` | `Task` | Searches WhatsApp for a sub-group by name and opens it |
-| `NavigateAndScrapGroupAsync()` | `List<string>` | Scrolls up 5× for lazy-load then extracts all messages |
-| `CallGeminiToSummarizeAsync()` | `string` | Posts messages to Gemini API, returns Arabic summary |
-| `chimneysFilter(text)` | `string` | Trims text to last 40,000 chars to stay within Gemini limits |
-| `NavigateAndSendSummaryAsync()` | `Task` | Pastes summary into target group using Clipboard event |
-| `StopAsync()` | `Task` | Gracefully closes Edge and disposes `HttpClient` on shutdown |
+| Class | Method | Description |
+|-------|--------|-------------|
+| `WhatsAppAutomationWorker` | `ExecuteAsync()` | Main loop — schedules and triggers the daily pipeline |
+| `WhatsAppAutomationWorker` | `RunPipelineAsync()` | Coordinates all 4 pipeline steps in order |
+| `WhatsAppClient` | `InitializeAsync()` | Launches Edge, loads WhatsApp Web, detects QR expiry |
+| `WhatsAppClient` | `NavigateToChatAsync()` | Searches for a group with up to 3 retry attempts |
+| `WhatsAppClient` | `ScrapeMessagesAsync()` | Scrolls up to date boundary then harvests filtered messages |
+| `WhatsAppClient` | `SendMessageAsync()` | Pastes summary via Clipboard event + Enter fallback |
+| `GeminiService` | `SummarizeAsync()` | Loops through model chain until one succeeds |
+| `GeminiMessageFilter` | `Filter()` | Trims to last 40,000 characters (newest messages kept) |
 
 ---
 
 ## ⚠️ Important Notes & Limitations
 
-- 🪟 **Windows only** — Edge path is hardcoded. Linux/Mac require path changes .
+- 🪟 **Windows only** — Edge path defaults to Windows. Linux/Mac require updating `EdgePath` in config.
 - 📜 **WhatsApp Web ToS** — Automating WhatsApp Web may violate WhatsApp's Terms of Service. Use responsibly.
 - ✂️ **Gemini token limit** — Messages trimmed to last 40,000 characters. Older messages may be cut off.
 - 🔄 **Selectors may break** — WhatsApp Web updates its HTML periodically. CSS selectors may need updating.
 - 📅 **One run per day** — The scheduler runs the pipeline exactly once per day at the configured time.
+- 🔑 **API Key** — Must start with `AIzaSy`. Keys from other Google services will return 401.
+- 💳 **Free tier limits** — `gemini-3.5-flash` and `gemini-3.1-flash-lite` require billing. The fallback chain ensures the service still works on free tier using `gemini-2.5-flash`.
 
 ---
 
@@ -202,12 +259,15 @@ AutomationDemo/
 
 | Problem | Solution |
 |---------|----------|
-| Edge not found error | Verify Edge is installed at the exact hardcoded path, or update `edgePath` |
-| QR code appears every time | Make sure `WhatsAppUserData/` folder is not deleted between runs |
-| Gemini API returns 400/403 | Check that `GeminiApiKey` is correct and has quota remaining |
-| No messages scraped | The CSS selector `.copyable-text` may have changed — inspect WhatsApp Web DOM and update |
-| Message not sent | Both Enter key and green send button are tried automatically — check logs for details |
-| Timeout waiting for WhatsApp | Increase `Timeout` values in `WaitForSelectorOptions`, or check internet connection |
+| Edge not found | Verify Edge is installed, or set `EdgePath` in `appsettings.json` |
+| QR code appears every time | Make sure `WhatsAppUserData/` is not deleted between runs |
+| Gemini returns 401 Unauthorized | API key is wrong or from the wrong service — must start with `AIzaSy` |
+| Gemini returns 429 TooManyRequests | Free tier rate limit hit — the fallback chain will try the next model automatically |
+| Gemini returns 404 NotFound | Model name is incorrect or not available in your region |
+| 0 messages scraped | Check logs for `[Harvest] Sample meta attribute` — shows the date format WhatsApp is using |
+| Wrong chat opened | Group name in config doesn't match exactly — check for extra spaces or Arabic vs English characters |
+| Message not sent | Increase `Task.Delay` in `SendMessageAsync` (currently 20 seconds) |
+| Graceful shutdown logs as Critical | Normal — pressing Ctrl+C triggers `OperationCanceledException` which is caught cleanly |
 
 ---
 
